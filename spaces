@@ -1,0 +1,165 @@
+// Root: ecommerce-erp-app
+// Tech: Next.js (App Router), Tailwind CSS, Supabase, Stripe
+
+// 1. INSTALL DEPENDENCIES (run in terminal):
+// npx create-next-app@latest ecommerce-erp-app --app --tailwind --eslint --typescript
+// cd ecommerce-erp-app
+// npm install @supabase/supabase-js stripe react-hook-form @heroicons/react recharts xlsx
+
+// 2. ENV FILE (create .env.local):
+// NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+// NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+// STRIPE_SECRET_KEY=your_stripe_secret_key
+// NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
+
+// 3. SUPABASE CLIENT SETUP (/lib/supabase.ts)
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+export default supabaseClient;
+
+// 4. VENDOR REGISTRATION PAGE (/app/vendor/register/page.tsx)
+'use client';
+import { useState } from 'react';
+import supabaseClient from '@/lib/supabase';
+
+export default function VendorRegisterPage() {
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState('');
+
+  const handleRegister = async () => {
+    const { error } = await supabaseClient.auth.signUp({
+      email,
+      options: {
+        data: { role: 'vendor' },
+      },
+    });
+    if (error) setMessage(error.message);
+    else setMessage('Check your email to confirm registration!');
+  };
+
+  return (
+    <div className="p-4 max-w-md mx-auto">
+      <h1 className="text-2xl font-bold mb-4">Vendor Registration</h1>
+      <input
+        type="email"
+        placeholder="Enter your vendor email"
+        className="border p-2 w-full mb-2"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+      />
+      <button onClick={handleRegister} className="bg-green-600 text-white px-4 py-2 rounded">
+        Register
+      </button>
+      <p className="mt-2 text-sm text-gray-600">{message}</p>
+    </div>
+  );
+}
+
+// 5. VENDOR DASHBOARD PAGE (/app/vendor/dashboard/page.tsx)
+'use client';
+
+import { useEffect, useState } from 'react';
+import supabaseClient from '@/lib/supabase';
+
+export default function VendorDashboard() {
+  const [products, setProducts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: '', price: '', stock: '' });
+
+  const fetchProducts = async () => {
+    const { data: userData, error: userError } = await supabaseClient.auth.getUser();
+    if (userError) return console.error('User fetch error:', userError);
+
+    const user = userData?.user;
+    if (user) {
+      const { data: productData, error: productError } = await supabaseClient
+        .from('products')
+        .select('*')
+        .eq('vendor_id', user.id);
+      if (productError) return console.error('Product fetch error:', productError);
+      setProducts(productData || []);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchProducts(); }, []);
+
+  const handleDelete = async (id: string) => {
+    await supabaseClient.from('products').delete().eq('id', id);
+    fetchProducts();
+  };
+
+  const handleEdit = (product: any) => {
+    setEditingId(product.id);
+    setForm({ name: product.name, price: product.price.toString(), stock: product.stock.toString() });
+  };
+
+  const handleSave = async () => {
+    if (!editingId) return;
+    await supabaseClient.from('products').update({
+      name: form.name,
+      price: parseFloat(form.price),
+      stock: parseInt(form.stock)
+    }).eq('id', editingId);
+    setEditingId(null);
+    setForm({ name: '', price: '', stock: '' });
+    fetchProducts();
+  };
+
+  if (loading) return <div className="p-4">Loading...</div>;
+
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Vendor Dashboard</h1>
+      <h2 className="text-xl mb-2">Your Products</h2>
+      <ul className="space-y-2">
+        {products.length > 0 ? (
+          products.map((product) => (
+            <li key={product.id} className="border p-2 space-y-1">
+              {editingId === product.id ? (
+                <div>
+                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="border px-2 py-1 mr-2" />
+                  <input value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} className="border px-2 py-1 mr-2" />
+                  <input value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} className="border px-2 py-1 mr-2" />
+                  <button onClick={handleSave} className="bg-green-500 text-white px-2 py-1 rounded mr-2">Save</button>
+                </div>
+              ) : (
+                <>
+                  {product.name} - ${product.price} (Stock: {product.stock})
+                  <div className="mt-1">
+                    <button onClick={() => handleEdit(product)} className="bg-yellow-400 text-black px-2 py-1 rounded mr-2">Edit</button>
+                    <button onClick={() => handleDelete(product.id)} className="bg-red-500 text-white px-2 py-1 rounded">Delete</button>
+                  </div>
+                </>
+              )}
+            </li>
+          ))
+        ) : (
+          <p>No products found.</p>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+// 6. SUPABASE SQL UPDATE FOR VENDOR SUPPORT
+-- Alter table: products
+ALTER TABLE products ADD COLUMN vendor_id uuid REFERENCES auth.users(id);
+
+-- Optional: Add vendor_profiles table
+CREATE TABLE vendor_profiles (
+  id uuid PRIMARY KEY REFERENCES auth.users(id),
+  business_name TEXT,
+  contact_number TEXT,
+  created_at TIMESTAMP DEFAULT now()
+);
+
+// TO DEPLOY:
+// - Push to GitHub
+// - Go to vercel.com → New Project → Import repo
+// - Add env vars → Deploy
